@@ -569,8 +569,8 @@ Many Magit faces inherit from this one by default."
 	  (or next
 	      (magit-next-section parent))))))
 
-(defun magit-goto-next-section ()
-  (interactive)
+
+(defun magit-goto-next-section-or-nil ()
   (let* ((section (magit-current-section))
 	 (next (or (and (not (magit-section-hidden section))
 			(magit-section-children section)
@@ -582,8 +582,15 @@ Many Magit faces inherit from this one by default."
 	(progn
 	  (goto-char (magit-section-beginning next))
 	  (if (memq magit-submode '(log reflog))
-	      (magit-show-commit next)))
-      (message "No next section"))))
+	      (magit-show-commit next))
+	  t)
+      nil)))
+
+(defun magit-goto-next-section ()
+  (interactive)
+  (unless (magit-goto-next-section-or-nil)      
+      (message "No next section")))
+
 
 (defun magit-prev-section (section)
   (let ((parent (magit-section-parent section)))
@@ -1045,6 +1052,7 @@ Many Magit faces inherit from this one by default."
     (define-key map (kbd "i") 'magit-ignore-item)
     (define-key map (kbd "?") 'magit-describe-item)
     (define-key map (kbd ".") 'magit-mark-item)
+    (define-key map (kbd ",") 'magit-hunk-split)
     (define-key map (kbd "=") 'magit-diff-with-mark)
     (define-key map (kbd "-") 'magit-diff-smaller-hunks)
     (define-key map (kbd "+") 'magit-diff-larger-hunks)
@@ -2772,5 +2780,49 @@ Prefix arg means justify as well."
     (switch-to-buffer-other-window "*magit-branches*")
     (erase-buffer)
     (shell-command (concat magit-git-executable " branch -va") t t)))
+
+
+(defun magit-hunk-split ()
+  "Splits a hunk on the current line, giving the user more fine-grained control over staging hunks."
+  (interactive)
+  (let ((stype (magit-section-type (magit-current-section))))
+    (if (eq stype 'hunk)
+	(progn (beginning-of-line)
+	       (let* ((old-section (magit-current-section))
+		      (parent (magit-section-parent old-section))
+		      (oldsect-cdr (memq old-section
+					 (magit-section-children parent)))
+		      ;; FIXME: is this correct: ?
+		      (new-section (copy-seq old-section))
+		      (old-end-point (point))
+		      addlen
+		      sections-to-update)
+    
+		 (save-excursion 
+		   (while (magit-goto-next-section-or-nil)
+		     (push (magit-current-section) sections-to-update)))
+    
+		 (diff-split-hunk)
+		 (setf addlen (- (point) old-end-point))
+		 (incf (magit-section-end new-section) addlen)
+		 (beginning-of-line 0) ;; move back one line
+		 (setf (magit-section-end old-section) (point)
+		       (magit-section-beginning new-section) (point))
+
+		 ;; insert new hunk:
+		 (rplacd oldsect-cdr (cons new-section (cdr oldsect-cdr)))
+
+		 ;;
+		 (setq buffer-read-only nil)
+		 (put-text-property (magit-section-beginning new-section)
+				    (magit-section-end new-section)
+				    'magit-section
+				    new-section)
+		 (setq buffer-read-only t)
+
+		 (dolist (i sections-to-update)
+		   (incf (magit-section-beginning i) addlen)
+		   (incf (magit-section-end i) addlen))))
+	(message "Type %s is not splittable" stype))))
 
 (provide 'magit)
