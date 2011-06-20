@@ -536,6 +536,7 @@ Many Magit faces inherit from this one by default."
     (define-key map (kbd "i") 'magit-ignore-item)
     (define-key map (kbd "I") 'magit-ignore-item-locally)
     (define-key map (kbd ".") 'magit-mark-item)
+    (define-key map (kbd ",") 'magit-hunk-split)
     (define-key map (kbd "=") 'magit-diff-with-mark)
     (define-key map (kbd "d") 'magit-diff-working-tree)
     (define-key map (kbd "D") 'magit-diff)
@@ -1436,6 +1437,10 @@ see `magit-insert-section' for meaning of the arguments"
                  (if (< offset 0)
                      (recenter offset)))))
           (t (message "No next section")))))
+
+(defun magit-goto-next-section-or-nil ()
+  (unless (string= (magit-goto-next-section) "No next section")
+      nil))
 
 (defun magit-prev-section (section)
   "Return the section that is before SECTION."
@@ -5286,6 +5291,50 @@ With a prefix arg, do a submodule update --init"
         (magit-start-process "Gitk" nil "sh" magit-gitk-executable "--all")))
      (t
       (magit-start-process "Gitk" nil magit-gitk-executable "--all")))))
+
+
+(defun magit-hunk-split ()
+  "Splits a hunk on the current line, giving the user more fine-grained control over staging hunks."
+  (interactive)
+  (let ((stype (magit-section-type (magit-current-section))))
+    (if (eq stype 'hunk)
+	(progn (beginning-of-line)
+	       (let* ((old-section (magit-current-section))
+		      (parent (magit-section-parent old-section))
+		      (oldsect-cdr (memq old-section
+					 (magit-section-children parent)))
+		      ;; FIXME: is this correct: ?
+		      (new-section (copy-seq old-section))
+		      (old-end-point (point))
+		      addlen
+		      sections-to-update)
+    
+		 (save-excursion 
+		   (while (magit-goto-next-section-or-nil)
+		     (push (magit-current-section) sections-to-update)))
+    
+		 (diff-split-hunk)
+		 (setf addlen (- (point) old-end-point))
+		 (incf (magit-section-end new-section) addlen)
+		 (beginning-of-line 0) ;; move back one line
+		 (setf (magit-section-end old-section) (point)
+		       (magit-section-beginning new-section) (point))
+
+		 ;; insert new hunk:
+		 (rplacd oldsect-cdr (cons new-section (cdr oldsect-cdr)))
+
+		 ;;
+		 (setq buffer-read-only nil)
+		 (put-text-property (magit-section-beginning new-section)
+				    (magit-section-end new-section)
+				    'magit-section
+				    new-section)
+		 (setq buffer-read-only t)
+
+		 (dolist (i sections-to-update)
+		   (incf (magit-section-beginning i) addlen)
+		   (incf (magit-section-end i) addlen))))
+	(message "Type %s is not splittable" stype))))
 
 (provide 'magit)
 ;;; magit.el ends here
